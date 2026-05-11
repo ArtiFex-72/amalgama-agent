@@ -594,7 +594,17 @@ def parse_args() -> argparse.Namespace:
         default=BASE_URL,
         help=f"Platform API base URL (default: {BASE_URL})",
     )
+    parser.add_argument(
+        "--resume",
+        metavar="JOB_ID",
+        default=None,
+        help="Resume an interrupted job by its ID (skips steps already completed)",
+    )
     return parser.parse_args()
+
+
+def fetch_resume_state(job_id: str, api_key: str) -> dict:
+    return api_call("GET", f"{BASE_URL}/jobs/{job_id}/resume_state", api_key)
 
 
 def main() -> None:
@@ -618,17 +628,68 @@ def main() -> None:
 
     os.makedirs(output_path, exist_ok=True)
 
-    # Step 1 — Register
-    job_id = register_job(model_a, model_b, api_key)
+    # -----------------------------------------------------------------------
+    # Resume path
+    # -----------------------------------------------------------------------
+    if args.resume:
+        job_id = args.resume
+        log(f"Resuming job {job_id}…")
+        state = fetch_resume_state(job_id, api_key)
+        status = state["status"]
+        attempts_completed = state["attempts_completed"]
+        log(f"  Status: {status}  |  Attempts completed: {attempts_completed}")
 
-    # Step 2 — Architecture compatibility
-    check_compatibility(model_a, model_b, job_id, api_key)
+        if status in ("complete", "failed", "unmergeable", "failed_incompatible"):
+            log("Job already finished. Downloading report.")
+            download_report(output_path, job_id, api_key)
+            sys.exit(0)
 
-    # Step 3 — Baselines
-    baselines = run_baselines(model_a, model_b, job_id, api_key)  # noqa: F841
+        # Decide where to re-enter
+        skip_compat = status not in ("created",)
+        skip_baselines = state["baselines_recorded"]
+        start_attempt = attempts_completed + 1
 
+        # If the last attempt has a retry verdict it means scores were posted
+        # but the next attempt's merge hasn't started — start_attempt is correct.
+        # If the last attempt has no verdict yet (interrupted mid-merge or
+        # mid-benchmark), re-run that attempt from the top.
+        last_verdict = state.get("last_verdict") or {}
+        if attempts_completed > 0 and last_verdict.get("verdict") not in ("retry", "certified", "unmergeable"):
+            start_attempt = attempts_completed  # redo incomplete attempt
+            log(f"  Last attempt {attempts_completed} was incomplete — re-running it.")
+            delete_merged_output(output_path)
+            os.makedirs(output_path, exist_ok=True)
+
+        if not skip_compat:
+            check_compatibility(model_a, model_b, job_id, api_key)
+        else:
+            log("  Skipping compatibility check (already done).")
+
+        if not skip_baselines:
+            run_baselines(model_a, model_b, job_id, api_key)
+        else:
+            log("  Skipping baselines (already recorded).")
+
+    # -----------------------------------------------------------------------
+    # Fresh start path
+    # -----------------------------------------------------------------------
+    else:
+        # Step 1 — Register
+        job_id = register_job(model_a, model_b, api_key)
+
+        # Step 2 — Architecture compatibility
+        check_compatibility(model_a, model_b, job_id, api_key)
+
+        # Step 3 — Baselines
+        run_baselines(model_a, model_b, job_id, api_key)
+
+        start_attempt = 1
+
+    # -----------------------------------------------------------------------
+    # Merge loop
+    # -----------------------------------------------------------------------
     certified = False
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(start_attempt, max_attempts + 1):
         log(f"\n--- Merge attempt {attempt}/{max_attempts} ---")
 
         # Step 4 — Get merge parameters
