@@ -22,9 +22,13 @@ import tempfile
 import time
 from pathlib import Path
 
+import re
+
 import requests
+import torch
 import yaml
-from transformers import AutoConfig
+from datasets import load_dataset
+from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -171,16 +175,12 @@ def run_humaneval(model_path: str, num_problems: int = HUMANEVAL_PROBLEMS) -> fl
     Returns pass@1 score in [0, 1].
     """
     try:
-        from datasets import load_dataset
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        import torch
-
         log(f"  Loading tokenizer and model from {model_path}…")
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
+            torch_dtype=torch.float16,
+            device_map="cuda:0",
         )
         model.eval()
 
@@ -201,13 +201,11 @@ def run_humaneval(model_path: str, num_problems: int = HUMANEVAL_PROBLEMS) -> fl
             completion = tokenizer.decode(
                 output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True
             )
-            full_code = problem["prompt"] + completion
+            full_code = problem["prompt"] + completion + "\n" + problem["test"]
             try:
                 exec_globals: dict = {}
                 exec(full_code, exec_globals)  # noqa: S102
-                test_fn = problem["test"]
-                exec(test_fn, exec_globals)  # noqa: S102
-                exec_globals["check"](exec_globals.get(problem["entry_point"]))  # noqa: S102
+                exec_globals["check"](exec_globals[problem["entry_point"]])  # noqa: S102
                 passed += 1
             except Exception:
                 pass
@@ -232,11 +230,6 @@ def run_gsm8k(model_path: str, num_problems: int = GSM8K_PROBLEMS) -> float:
     Returns exact-match accuracy in [0, 1].
     """
     try:
-        from datasets import load_dataset
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        import torch
-        import re
-
         FEW_SHOT = (
             "Q: Natalia sold clips to 48 of her friends in April and then sold half as many clips"
             " in May. How many clips did Natalia sell altogether in April and May?\n"
@@ -250,8 +243,8 @@ def run_gsm8k(model_path: str, num_problems: int = GSM8K_PROBLEMS) -> float:
         tokenizer = AutoTokenizer.from_pretrained(model_path)
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
+            torch_dtype=torch.float16,
+            device_map="cuda:0",
         )
         model.eval()
 
