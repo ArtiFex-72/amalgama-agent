@@ -20,7 +20,7 @@ All merge intelligence lives in the Amalgama platform API.
 ## Installation
 
 ```bash
-curl -O https://raw.githubusercontent.com/Artifex00-00/amalgama-agent/main/amalgama_agent.py
+curl -O https://raw.githubusercontent.com/ArtiFex_72/amalgama-agent/main/amalgama_agent.py
 pip install transformers mergekit datasets torch accelerate pyyaml requests
 ```
 
