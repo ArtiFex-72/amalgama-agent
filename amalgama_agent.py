@@ -401,7 +401,12 @@ def execute_merge(
     job_id: str,
     api_key: str,
 ) -> None:
-    config = build_mergekit_config(merge_params, model_a, model_b)
+    # Agent may provide a fully-specified MergeKit config directly
+    if merge_params.get("mergekit_config"):
+        config = merge_params["mergekit_config"]
+        log(f"Using agent-provided MergeKit config (algorithm: {merge_params.get('algorithm', '?')})")
+    else:
+        config = build_mergekit_config(merge_params, model_a, model_b)
 
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".yml", delete=False, prefix="amalgama_merge_"
